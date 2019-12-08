@@ -282,18 +282,22 @@ int get_value(message *mes, string item, string &value)
     if (i == 10)
         return -1;
 }
-int send_to_http_response(int client_socket, char *status)
+int send_to_http_response(int client_socket, string status)
 {
-    char not_found_response_template[1024] =
-        "HTTP/1.1 200 OK\r\n"
-        "Access-Control-Allow-Origin: http://localhost:3000\r\n"
-        "Content-type: application/x-www-form-urlencoded; charset=GBK2312\r\n"
-        "\r\n"
-        "{\"status\":\"";
-    strcat(not_found_response_template, status);
-    strcat(not_found_response_template, "\"}");
-    int req = strlen(not_found_response_template);
-    send(client_socket, not_found_response_template, req, 0);
+    string response = "HTTP/1.1 200 OK\r\n"
+                      "Access-Control-Allow-Origin: http://localhost:3000\r\n"
+                      "Content-type: application/x-www-form-urlencoded; charset=GBK2312\r\n"
+                      "\r\n";
+    // char not_found_response_template[1024] =
+    //     "HTTP/1.1 200 OK\r\n"
+    //     "Access-Control-Allow-Origin: http://localhost:3000\r\n"
+    //     "Content-type: application/x-www-form-urlencoded; charset=GBK2312\r\n"
+    //     "\r\n";
+    response += status;
+    // strcat(not_found_response_template, status);
+    send(client_socket, response.c_str(), response.length(), 0);
+    // int req = strlen(not_found_response_template);
+    // send(client_socket, not_found_response_template, req, 0);
     return 1;
 }
 void print_log_top(int condition, const char *str)
@@ -481,27 +485,45 @@ void fd_set_init(fd_set *rest, fd_set *west, int server_socket)
     if (flag < 0)
         error_exit("select error");
 }
-void http_signin(MyDB *mydatabase, char *status, message *mes)
+void http_signin(MyDB *mydatabase, string &status, message *mes)
 {
     string username, password;
     print_log_top(_SHOW_SIGNIN_INF, "请求登录");
     get_value(mes, "username", username);
     get_value(mes, "password", password);
+    status = status.substr(0, status.length() - 1);
+    if (status.length() != 1)
+    {
+        status += ",";
+    }
     if (mydatabase->IsPwdCorrent(username, password))
-        strcpy(status, "OK");
+    {
+
+        status += "\"status\":\"OK\"}";
+    }
+    else
+        status += "\"status\":\"WRONG\"}";
+    // strcpy(status, "OK");
     print_log_bottum(_SHOW_SIGNIN_INF);
 }
-void http_signup(MyDB *mydatabase, char *status, message *mes)
+void http_signup(MyDB *mydatabase, string &status, message *mes)
 {
     string username, password;
     print_log_top(_SHOW_SIGNUP_INF, "请求注册");
     get_value(mes, "username", username);
     get_value(mes, "password", password);
+    status = status.substr(0, status.length() - 1);
+    if (status.length() != 1)
+    {
+        status += ",";
+    }
     if (mydatabase->InsertNewUser(username, password))
     {
-        strcpy(status, "OK");
+        status += "\"status\":\"OK\"}";
         write_log_sign_up(mes);
     }
+    else
+        status += "\"status\":\"WRONG\"}";
     print_log_bottum(_SHOW_SIGNUP_INF);
 }
 int main(int argc, char **argv)
@@ -529,13 +551,16 @@ int main(int argc, char **argv)
                 int client_socket = http_new_connection(server_socket, pin);
                 read_from_http_request(client_socket, mes); //接收网页前端的http请求
                 string process;                             //当前http请求描述符
-                char status[10] = "WRONG";                  //http响应描述符，初始为错误
-                get_value(mes, "process", process);         //获取请求描述
+                string response = "{}";
+                // char status[10] = "WRONG";          //http响应描述符，初始为错误
+                get_value(mes, "process", process); //获取请求描述
                 if (process == "signin")
-                    http_signin(mydatabase, status, mes);
+                    http_signin(mydatabase, response, mes);
                 else if (process == "signup")
-                    http_signup(mydatabase, status, mes);
-                send_to_http_response(client_socket, status); //向网页前端发送http响应
+                    http_signup(mydatabase, response, mes);
+                else if (process == "send_request")
+                    ;
+                send_to_http_response(client_socket, response); //向网页前端发送http响应
                 http_close_connection(client_socket, pin);
                 return (EXIT_SUCCESS);
             }
