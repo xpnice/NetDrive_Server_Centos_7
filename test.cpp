@@ -6,6 +6,7 @@
 #include <netdb.h>
 #include <ctype.h> //toupper （小写转化为大写）
 #include <sys/ioctl.h>
+#include <cstdio>
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <ifaddrs.h>
@@ -18,7 +19,10 @@
 #include <cstring>
 #include <unistd.h>
 #include <iomanip>
+#include <sys/stat.h>
+#include <sstream>
 #include <mysql.h> // mysql特有
+#include <sys/select.h>
 using namespace std;
 #define port 20521
 #define _SHOW_HTTP_REQUEST 1
@@ -27,7 +31,7 @@ using namespace std;
 #define _SHOW_SIGNUP_INF 1
 #define _LOG_COL_LENGTH 80
 #define _SIGN_IN_AWAIT 0
-const char *host_name = "192.168.193.80";
+const char *host_name = "120.55.41.240";
 
 typedef struct message
 {
@@ -60,8 +64,8 @@ void initDBConf(DBConf *myDBConf)
 {
     myDBConf->_host = "localhost";
     myDBConf->_user = "root";
-    myDBConf->_password = "Tielin0303!";
-    myDBConf->_database = "team3";
+    myDBConf->_password = "Tgx226057602.";
+    myDBConf->_database = "assign";
     myDBConf->_charset = "gbk";
     myDBConf->_port = 0;
     myDBConf->_flag = 0;
@@ -285,9 +289,13 @@ int get_value(message *mes, string item, string &value)
 int send_to_http_response(int client_socket, string status)
 {
     string response = "HTTP/1.1 200 OK\r\n"
-                      "Access-Control-Allow-Origin: http://localhost:3000\r\n"
+                      "Access-Control-Allow-Origin:http://localhost:3000\r\n"
+                      "Access-Control-Allow-Methods: POST, GET, OPTIONS \r\n"
+                      "Access-Control-Allow-Headers: x-requested-with,X-PINGOTHER, Content-Typ\r\n"
+                      "Access-Control-Allow-Credentials: true\r\n"
                       "Content-type: application/x-www-form-urlencoded; charset=GBK2312\r\n"
                       "\r\n";
+    //"{\"status\":\"OK\"\r\n}";
     // char not_found_response_template[1024] =
     //     "HTTP/1.1 200 OK\r\n"
     //     "Access-Control-Allow-Origin: http://localhost:3000\r\n"
@@ -322,8 +330,16 @@ void print_log_bottum(int condition)
 }
 void read_from_http_request(int client_socket, message *mes)
 {
-    char request[1024];
+    char request[1024 * 1024];
     int req = recv(client_socket, request, sizeof(request), 0);
+    // while (1)
+    // {
+    //     req += recv(client_socket, request, sizeof(request), 0);
+    //     cout << req << endl;
+    //     if (req >= 100000||req==460||req==507)
+    //         break;
+    // }
+    cout << req << endl;
     request[req] = '\0';
     string buffer = (string)request;
     if (req == -1)
@@ -368,7 +384,7 @@ void read_from_http_request(int client_socket, message *mes)
     print_log_bottum(_SHOW_POST_BODY);
 }
 
-int no_block(int fd, const char *str)
+int no_block(int fd)
 {
 
     int flags;
@@ -458,7 +474,7 @@ int listen_socket_init()
         close(server_socket);
         exit(1);
     }
-    no_block(server_socket, "SOCKET");
+    no_block(server_socket);
     bzero(&sin, sizeof(sin));         // 初始化 然后是设置套接字
     sin.sin_family = AF_INET;         //协议族，在socket编程中只能是AF_INET(TCP/IP协议族)
     sin.sin_addr.s_addr = INADDR_ANY; //sin_addr存储IP地址,使用in_addr这个数据结构
@@ -485,24 +501,27 @@ void fd_set_init(fd_set *rest, fd_set *west, int server_socket)
     if (flag < 0)
         error_exit("select error");
 }
+
+void make_response(string &response, string item, string value)
+{
+    response = response.substr(0, response.length() - 1);
+    cout << response << endl;
+    if (response.length() != 1)
+    {
+        response += ",";
+    }
+    response = response + "\"" + item + "\":\"" + value + "\"}";
+}
 void http_signin(MyDB *mydatabase, string &status, message *mes)
 {
     string username, password;
     print_log_top(_SHOW_SIGNIN_INF, "请求登录");
     get_value(mes, "username", username);
     get_value(mes, "password", password);
-    status = status.substr(0, status.length() - 1);
-    if (status.length() != 1)
-    {
-        status += ",";
-    }
     if (mydatabase->IsPwdCorrent(username, password))
-    {
-
-        status += "\"status\":\"OK\"}";
-    }
+        make_response(status, "status", "OK");
     else
-        status += "\"status\":\"WRONG\"}";
+        make_response(status, "status", "WRONG");
     // strcpy(status, "OK");
     print_log_bottum(_SHOW_SIGNIN_INF);
 }
@@ -512,22 +531,249 @@ void http_signup(MyDB *mydatabase, string &status, message *mes)
     print_log_top(_SHOW_SIGNUP_INF, "请求注册");
     get_value(mes, "username", username);
     get_value(mes, "password", password);
-    status = status.substr(0, status.length() - 1);
-    if (status.length() != 1)
-    {
-        status += ",";
-    }
     if (mydatabase->InsertNewUser(username, password))
     {
-        status += "\"status\":\"OK\"}";
+        make_response(status, "status", "OK");
         write_log_sign_up(mes);
     }
     else
-        status += "\"status\":\"WRONG\"}";
+        make_response(status, "status", "WRONG");
     print_log_bottum(_SHOW_SIGNUP_INF);
 }
+
+void read_from_http_to_file(int client_socket, string file_name)
+{
+    no_block(client_socket);
+    char request[1024];
+    int fd = open(file_name.c_str(), O_WRONLY | O_CREAT);
+    if (fd < 0)
+    {
+        perror("open file while writing");
+        exit(1);
+    }
+    fd_set rest;
+    /*select延时变量*/
+    struct timeval tempval;  //select等待时间
+    tempval.tv_sec = 0;      //select等待秒数
+    tempval.tv_usec = 50000; //select等待微秒数
+    int total = 0;
+    int req = 0;
+    while (1)
+    {
+        total = 0;
+        FD_ZERO(&rest);                                                             //清空读操作符
+        FD_SET(client_socket, &rest);                                               //把监听套接字放入读操作符
+        int select_return = select(client_socket + 1, &rest, NULL, NULL, &tempval); //监听套接的可读和可写条件
+        if (select_return == 0)
+            break;
+        if (select_return < 0)
+        {
+            printf("select error\n");
+            exit(1);
+        }
+        if (FD_ISSET(client_socket, &rest))
+        {
+            req = read(client_socket, request, sizeof(request));
+
+            while (1)
+            {
+                if (total == req)
+                    break;
+                int weq = write(fd, &request[total], req);
+                total += weq;
+            }
+        }
+    }
+    close(fd);
+}
+int read_line(int fd, string &one_line)
+{
+    char one_letter;
+    one_line = "";
+    while (1)
+    {
+        int red = read(fd, &one_letter, 1);
+        if (red == -1)
+        {
+            perror("read file");
+            close(fd);
+            return -1;
+        }
+        if (red == 0)
+            break;
+        one_line += one_letter;
+
+        if (one_letter == '\n')
+            break;
+    }
+    return 0;
+}
+int analysis_request_message(string file_name, string &boundary_or_request, message *mes)
+{
+
+    int fd = open(file_name.c_str(), O_RDONLY);
+    string one_line;
+    while (1)
+    {
+        if (read_line(fd, one_line) == -1)
+        {
+            return -1; //返回-1代表出错
+        }
+        if (one_line[0] == '{')
+        {
+            boundary_or_request = one_line;
+            int i = 0;
+            int m = 0;
+            while (1)
+            {
+                i += get_in_syh(&one_line[++i], mes[m].item);
+                i += get_in_syh(&one_line[++i], mes[m].value);
+                m++;
+                if (one_line[i] == '}')
+                    break;
+            }
+
+            close(fd);
+            return 0; //返回0 代表为非文件报文
+        }
+        int b_locate = one_line.find("boundary");
+        if (b_locate != -1)
+        {
+            boundary_or_request = one_line.substr(b_locate + 9, one_line.length() - b_locate - 11);
+            return fd;
+        }
+    }
+}
+int ayalysis_file_message(int fd, string &boundary_or_request, message *mes)
+{
+    string one_line;
+    string boundary = boundary_or_request;
+    int n_boundary = 0;
+    boundary = "--" + boundary;
+    while (1)
+    {
+
+        if (read_line(fd, one_line) == -1)
+        {
+            return -1; //返回-1代表出错
+        }
+        one_line = one_line.substr(0, one_line.length() - 2);
+        if (one_line == boundary)
+        {
+
+            n_boundary++;
+            while (1)
+            {
+                if (read_line(fd, one_line) == -1)
+                {
+                    return -1; //返回-1代表出错
+                }
+                if (one_line == "\r\n")
+                    break;
+            }
+
+            if (n_boundary == 1)
+            {
+                if (read_line(fd, one_line) == -1)
+                {
+                    return -1; //返回-1代表出错
+                }
+                boundary_or_request = one_line;
+                int i = 0;
+                int m = 0;
+                while (1)
+                {
+                    i += get_in_syh(&one_line[++i], mes[m].item);
+                    i += get_in_syh(&one_line[++i], mes[m].value);
+                    m++;
+                    if (one_line[i] == '}')
+                        break;
+                }
+            }
+            //cout << n_boundary << endl;
+
+            if (n_boundary == 2)
+            {
+                string old_line;
+                string path;
+                string chunk;
+                get_value(mes, "chunk", chunk);
+                string hash;
+                get_value(mes, "hash", hash);
+                path = "/home/tempfile/" + hash + "/" + chunk;
+                cout << path << endl;
+                int new_fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND);
+                if (new_fd < 0)
+                {
+                    perror("open new file");
+                    return -1; //失败返回-1
+                }
+                one_line = "";
+                int o = 0;
+
+                while (1)
+                {
+                    old_line = one_line;
+                    if (read_line(fd, one_line) == -1)
+                    {
+                        return -1; //返回-1代表出错
+                    }
+                    // cout << one_line;
+                    // cout << (boundary + "--\r\n");
+                    // cout << (one_line == boundary + "--");
+                    // getchar();
+
+                    if (one_line == boundary + "--\r\n")
+                    {
+                        close(fd);
+                        o = 2;
+                    }
+                    if (old_line != "")
+                    {
+                        int weq = write(new_fd, old_line.c_str(), old_line.length() - o);
+                        //cout << weq << endl;
+                    }
+                    if (o == 2)
+                    {
+                        close(new_fd);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void file_upload(MyDB *mydatabase, string &status, message *mes)
+{
+    cout << "dd" << endl;
+    //判断妙传
+    string hash;
+    get_value(mes, "hash", hash);
+    hash = "/home/tempfile/" + hash;
+    cout << hash << endl;
+    if (access(hash.c_str(), 0) == -1) //不存在文件夹
+                                       //新建文件夹
+        mkdir(hash.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+}
+
 int main(int argc, char **argv)
 {
+
+    if (access("/home/temp", 0) == -1) //不存在文件夹
+                                       //新建文件夹
+        mkdir("/home/temp", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    if (access("/home/tempfile", 0) == -1) //不存在文件夹
+                                           //新建文件夹
+        mkdir("/home/tempfile", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    // int msgid;
+    // int reval;
+    // int sflags;
+    // send_queue *mysend_queue = new send_queue[100];
+    // queue<int> usingnum_of_queue;  //当前正在使用的上传文件结构体队列;
+    // queue<int> available_of_queue; //可用的上传文件的结构体队列
+    // msgid = CreateMsgQueue();
+
     //数据库初始化
     MyDB *mydatabase = new MyDB();
     DBConf myDBConf;
@@ -548,20 +794,41 @@ int main(int argc, char **argv)
             if (pid == 0)
             {
                 struct sockaddr_in pin;
+                string boundary_or_request;
                 int client_socket = http_new_connection(server_socket, pin);
-                read_from_http_request(client_socket, mes); //接收网页前端的http请求
-                string process;                             //当前http请求描述符
+
+                stringstream ss;
+                ss << "/home/temp/tempmessage_" << getpid();
+                string filename;
+                filename = ss.str();
+                read_from_http_to_file(client_socket, filename);
+                int fd = analysis_request_message(filename, boundary_or_request, mes);
+                cout << fd << endl;
+                string process; //当前http请求描述符
                 string response = "{}";
-                // char status[10] = "WRONG";          //http响应描述符，初始为错误
-                get_value(mes, "process", process); //获取请求描述
-                if (process == "signin")
-                    http_signin(mydatabase, response, mes);
-                else if (process == "signup")
-                    http_signup(mydatabase, response, mes);
-                else if (process == "send_request")
-                    ;
+                cout << boundary_or_request << endl;
+                char status[10] = "WRONG"; //http响应描述符，初始为错误
+                if (fd == 0)
+                {
+                    get_value(mes, "process", process); //获取请求描述
+                    cout << process << endl;
+                    if (process == "signin")
+                        http_signin(mydatabase, response, mes);
+                    else if (process == "signup")
+                        http_signup(mydatabase, response, mes);
+                    else if (process == "uploadRequest")
+                        file_upload(mydatabase, response, mes);
+                    //把boundary_or_request变量直接写入消息队列；
+                }
+                if (fd != 0)
+                {
+                    ayalysis_file_message(fd, boundary_or_request, mes);
+                }
+                // read_from_http_request(client_socket, mes); //接收网页前端的http请求
                 send_to_http_response(client_socket, response); //向网页前端发送http响应
                 http_close_connection(client_socket, pin);
+                if (remove(filename.c_str()) != 0)
+                    cout << "删除失败\n";
                 return (EXIT_SUCCESS);
             }
         }
